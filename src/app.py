@@ -4,6 +4,16 @@ import streamlit as st
 import plotly.express as px
 from bertopic import BERTopic
 from utils import *
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import TimeSeriesSplit, train_test_split
+from sklearn.cluster import KMeans
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, KBinsDiscretizer
+from sklearn.manifold import TSNE
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # from transformers import pipeline
 
@@ -14,71 +24,120 @@ df = pd.read_csv('sample_data.csv')
 # Sales forecasting
 def sales_forecasting_section():
     st.header("Prognozowanie sprzedaży")
-    # Symulacja danych sprzedażowych
-    np.random.seed(42)
-    dates = pd.date_range(start="2024-01-01", end="2024-12-31", freq="D")
-    sales_data = pd.DataFrame(
-        {"Date": dates, "Sales": np.random.randint(1000, 5000, size=len(dates))}
-    )
+    
+    dfts= df.sort_values(by=['date'])
 
-    # Wykres liniowy prognozowanej sprzedaży
-    fig = px.line(
-        sales_data,
-        x="Date",
-        y="Sales",
-        title="Prognozowana sprzedaż",
-        labels={"Date": "Data", "Sales": "Sprzedaż"},
-    )
+    #convert datetime from object to datetime type
+    dfts['date'] = pd.to_datetime(dfts['date'])
+    #set datetime as index
+    dfts = dfts.set_index(dfts['date'])
 
-    fig.update_layout(xaxis_rangeslider_visible=True)
+    #drop datetime column
+    dfts.drop('date', axis=1, inplace=True)
 
+    #create hour, day and month variables from datetime index
+    dfts['hour'] = dfts.index.hour
+    dfts['day'] = dfts.index.day
+    dfts['month'] = dfts.index.month
+
+    #drop string-based columns
+    dfts.drop(['product', 'review', 'age', 'sex'], axis=1, inplace=True)
+
+    horizon=24*7
+    X = dfts.drop('price', axis=1)
+    y = dfts['price']
+        
+    #take last week of the dataset for validation
+    X_train, X_test = X.iloc[:-horizon,:], X.iloc[-horizon:,:]
+    y_train, y_test = y.iloc[:-horizon], y.iloc[-horizon:]
+        
+    #create, train and do inference of the model
+    model = RandomForestRegressor(random_state=42)
+    model.fit(X_train, y_train)
+    predictions = model.predict(X_test)
+    
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(x=dfts.index[0:111], y=y_test[0:111], mode='lines', name='Rzeczywisty trend', line=dict(color='green')))
+    fig.add_trace(go.Scatter(x=dfts.index[110:], y=predictions[110:], mode='lines', name='Przewidywany trend', line=dict(color='green', dash='dash')))
+
+    fig.update_layout(title=f'Trend rzeczywisty vs przewidywany',
+                    xaxis_title='Data i czas',
+                    yaxis_title='Zarobiona kwota [PLN]',
+                    legend=dict(font=dict(size=16)),
+                    font=dict(size=16),
+                    height=600,
+                    width=1000,
+                    template='plotly_white')
+    
     st.plotly_chart(fig)
-
 
 # Client segmentation
 def customer_segmentation_section():
     st.header("Segmentacja klientów")
 
-    # Symulacja danych klientów
-    np.random.seed(42)
-    customers = pd.DataFrame(
-        {
-            "CustomerID": range(1, 101),
-            "Age": np.random.randint(18, 65, size=100),
-            "AnnualIncome": np.random.randint(20000, 100000, size=100),
-            "PurchaseFrequency": np.random.randint(1, 20, size=100),
-        }
-    )
+    dfc = df.drop('date', axis=1)
+    
+    ### operations for categorical columns with order or binary values
+    ord_pipeline = Pipeline(steps=[
+        ('encode', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)),
+    ])
 
-    # Wykres kołowy udziału klientów w różnych grupach wiekowych
-    age_counts = customers["Age"].value_counts().sort_index()
-    fig_age = px.pie(
-        names=age_counts.index,
-        values=age_counts.values,
-        title="Segmentacja klientów - Grupy wiekowe",
-    )
-    fig_age.update_traces(textposition="inside", textinfo="percent+label")
+    ### operations for categorical unordered columns
+    cat_pipeline = Pipeline(steps=[
+        ('encode', OneHotEncoder(handle_unknown='ignore'))
+    ])
 
-    st.plotly_chart(fig_age)
+    ### operations for numerical columns
+    num_pipeline = Pipeline(steps=[
+        ('discretize', KBinsDiscretizer(n_bins=3, encode='ordinal', strategy='uniform'))
+    ])
 
-    # Histogram dochodu rocznego klientów
-    fig_income = px.histogram(
-        customers,
-        x="AnnualIncome",
-        nbins=20,
-        title="Histogram dochodu rocznego klientów",
-    )
-    st.plotly_chart(fig_income)
+    # Column transformer
+    col_trans = ColumnTransformer(transformers=[
+        ('ord_pipeline', ord_pipeline, ['score', 'sex']),
+        ('cat_pipeline', cat_pipeline, ['product', 'review']),
+        ('num_pipeline', num_pipeline, ['price', 'age'])
+    ],
+    remainder='drop',
+    n_jobs=-1)
 
-    # Histogram częstotliwości zakupów klientów
-    fig_purchase = px.histogram(
-        customers,
-        x="PurchaseFrequency",
-        nbins=20,
-        title="Histogram częstotliwości zakupów klientów",
-    )
-    st.plotly_chart(fig_purchase)
+    # hierarchical clustering at the end of the pipeline (limit as desired number of people in the group)
+    model_pipeline = Pipeline([
+        ('preprocessing', col_trans),
+    #    ('clustering', KMeans(linkage='ward'))
+    ])
 
+    # preprocess data
+    data_preprocessed = model_pipeline.fit_transform(dfc)
+
+    # convert compressed data to numpy array
+    decompressed_data = data_preprocessed.toarray()
+
+    # initialise model
+    model = KMeans(n_clusters=2, random_state=42)
+
+    # fit model
+    clustered_data = model.fit_predict(decompressed_data)
+
+    # Initialize TSNE model with desired parameters
+    tsne = TSNE(n_components=2, random_state=42)
+
+    # Perform t-SNE on the data
+    tsne_result = tsne.fit_transform(decompressed_data)
+
+    # Create a Plotly scatter plot
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(x=tsne_result[:, 0], y=tsne_result[:, 1], mode='markers', marker=dict(color=clustered_data, colorscale='rainbow')))
+
+    fig.update_layout(
+                    xaxis_title='t-SNE 1',
+                    yaxis_title='t-SNE 2',
+                    width=800,
+                    height=600)
+
+    st.plotly_chart(fig)
 
 # Topic modeling
 def topic_modeling_section():
