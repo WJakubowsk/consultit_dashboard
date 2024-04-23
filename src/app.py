@@ -9,8 +9,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, KBinsDiscretizer
 from sklearn.manifold import TSNE
 
-# from transformers import pipeline
-
 # load dataset
 df = pd.read_csv('sample_data.csv')
 
