@@ -2,33 +2,13 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-from textblob import TextBlob
+from bertopic import BERTopic
+from utils import *
 
 # from transformers import pipeline
 
-# Dane symulacyjne
-opinions = [
-    "Bardzo mi się podobały książki, świetna jakość!",
-    "Obsługa klienta była bardzo pomocna i profesjonalna.",
-    "Niestety, zeszyty były źle zapakowane i zostały uszkodzone w transporcie.",
-    "Bardzo szybka dostawa, ale jakość nie jest zadowalająca.",
-    "Kalendarze są pięknie zaprojektowane, ale cena trochę za wysoka.",
-]
-
-# Dane symulacyjne
-products = [
-    'Książka "Wiedźmin"',
-    "Zeszyt A4 linia",
-    "Kalendarz 2024",
-    "Długopis żelowy",
-    "Notes A5 kropka",
-]
-ratings = np.random.randint(1, 6, size=len(products))
-prices = np.random.randint(10, 100, size=len(products))
-
-df_products = pd.DataFrame(
-    {"Product": products, "Rating": ratings, "Price (PLN)": prices, "Review": opinions}
-)
+# load dataset
+df = pd.read_csv('sample_data.csv')
 
 
 # Sales forecasting
@@ -100,122 +80,46 @@ def customer_segmentation_section():
     st.plotly_chart(fig_purchase)
 
 
-# Sentiment analysis & topic modeling
-def sentiment_analysis_section():
-    st.header("Analiza sentymentu i modelowanie tematów")
-    # Analiza sentymentu dla każdej opinii
-    sentiment_scores = []
-    for opinion in df_products["Review"]:
-        sentiment = TextBlob(opinion).sentiment.polarity
-        sentiment_scores.append(sentiment)
+# Topic modeling
+def topic_modeling_section():
+    st.header("Analiza opinii klientów")
 
-    # Przygotowanie danych do wykresu
-    df_sentiment = pd.DataFrame(
-        {"Opinion": opinions, "Sentiment Score": sentiment_scores}
-    )
+    st.plotly_chart(create_gauge_chart(round(df['score'].mean(), 2), min_value=1, max_value = 5, 
+                                        label = "średnia ocena zamówienia"))
 
-    # Wykres słupkowy sentymentu opinii
-    fig_sentiment = px.bar(
-        df_sentiment,
-        x="Opinion",
-        y="Sentiment Score",
-        title="Analiza sentymentu opinii klientów",
-        labels={"Opinion": "Opinia", "Sentiment Score": "Wartość sentymentu"},
-    )
-    st.plotly_chart(fig_sentiment)
+    ## topic modeling
+    topic_modeling_model = BERTopic(language="english", nr_topics = 5)
+    topics, topic_assignments = topic_modeling_model.fit_transform(df['review'])
 
-    # Analiza sentymentu ogólnego
-    overall_sentiment = sum(sentiment_scores) / len(sentiment_scores)
-    st.write(f"Średni sentyment opinii klientów: {overall_sentiment:.2f}")
+    # Display top words for each topic
+    st.subheader("Wizualizacja grup tematycznych opinii klientów")
+    st.plotly_chart(topic_modeling_model.visualize_topics(title=""))
 
-    # Interpretacja sentymentu
-    if overall_sentiment > 0:
-        st.write("Ogólny sentyment opinii klientów jest pozytywny.")
-    elif overall_sentiment < 0:
-        st.write("Ogólny sentyment opinii klientów jest negatywny.")
-    else:
-        st.write("Ogólny sentyment opinii klientów jest neutralny.")
-
-
-# Product recommendation
-def product_recommendation_section():
-    st.header("Personalizacje ofert i rekomendacje produktów")
-    # sugeruj produkty w zestawach na podsawie podobnych zakupów użytkownik
-    # Wykres słupkowy ocen produktów
-    fig_ratings = px.bar(
-        df_products,
-        x="Product",
-        y="Rating",
-        title="Oceny produktów",
-        labels={"Product": "Produkt", "Rating": "Ocena"},
-    )
-    st.plotly_chart(fig_ratings)
-
-    # Wykres słupkowy cen produktów
-    fig_prices = px.bar(
-        df_products,
-        x="Product",
-        y="Price (PLN)",
-        title="Ceny produktów",
-        labels={"Product": "Produkt", "Price (PLN)": "Cena (PLN)"},
-    )
-    st.plotly_chart(fig_prices)
-
-    # Analiza rekomendacji
-    avg_rating = df_products["Rating"].mean()
-    avg_price = df_products["Price (PLN)"].mean()
-    st.write(f"Średnia ocena produktów: {avg_rating:.2f}")
-    st.write(f"Średnia cena produktów: {avg_price:.2f} PLN")
-
-    # Zalecenia na podstawie średnich wartości ocen i cen
-    if avg_rating > 3.5 and avg_price < 50:
-        st.write(
-            "Rekomendacja: Polecamy produkty z wysokimi ocenami i przystępnymi cenami."
-        )
-    elif avg_rating < 3.5 and avg_price < 50:
-        st.write(
-            "Rekomendacja: Produkty mają niższe oceny, ale są dostępne w przystępnych cenach."
-        )
-    elif avg_rating > 3.5 and avg_price > 50:
-        st.write("Rekomendacja: Produkty są dobrze oceniane, ale mają wyższe ceny.")
-    else:
-        st.write(
-            "Rekomendacja: Produkty mają zarówno niskie oceny, jak i wysokie ceny."
-        )
 
 
 def description_generation_section():
     st.header("Generowanie opisu produktu")
     # Wczytanie danych od użytkownika
-    product_input = st.text_input("Wpisz nazwę i opis produktu:")
+    product_input = st.text_input("Wpisz nazwę i krótki opis produktu:")
     max_length = st.slider(
         "Maksymalna długość opisu:", min_value=50, max_value=200, value=100
     )
 
-    # qa_pipeline = pipeline(
-    #     "question-answering",
-    #     model="henryk/bert-base-multilingual-cased-finetuned-polish-squad2",
-    #     tokenizer="henryk/bert-base-multilingual-cased-finetuned-polish-squad2",
-    # )
+    if st.button("Generuj opis"):
+        generated_description = generate_description(product_input, max_length)
+        st.markdown(f"**Wygenerowany opis:** {generated_description}")
 
-    # qa_pipeline(
-    #     {
-    #         "context": product_input,
-    #         "question": "Wygeneruj opis produktu",
-    #         max_length: max_length,
-    #     }
-    # )
+
 
 
 def main():
-    st.title("Dashboard Analizy Danych BookCrafters Sp. z.o.o.")
+    st.title("Dashboard analizy danych BookCrafters Sp. z.o.o.")
 
     # Tworzenie zakładek dla każdej sekcji
     tabs = [
         "Prognozowanie sprzedaży",
         "Segmentacja klientów",
-        "Analiza sentymentu",
-        "Rekomendacje produktów",
+        "Analiza opinii klientów",
         "Generowanie opisu produktu",
     ]
     selected_tab = st.sidebar.radio("Wybierz zakładkę", tabs)
@@ -224,10 +128,8 @@ def main():
         sales_forecasting_section()
     elif selected_tab == "Segmentacja klientów":
         customer_segmentation_section()
-    elif selected_tab == "Analiza sentymentu":
-        sentiment_analysis_section()
-    elif selected_tab == "Rekomendacje produktów":
-        product_recommendation_section()
+    elif selected_tab == "Analiza opinii klientów":
+        topic_modeling_section()
     elif selected_tab == "Generowanie opisu produktu":
         description_generation_section()
 
